@@ -124,8 +124,6 @@ const number: Parser<number> = map(regex(/^\d+(\.\d+)?/), (value) =>
   parseFloat(value)
 );
 
-const operator: Parser<string> = regex(/^[+\-*/]/);
-
 function between<T>(
   left: Parser<any>,
   parser: Parser<T>,
@@ -195,10 +193,6 @@ function factor(): Parser<number> {
 
 function lazy<T>(parserThunk: () => Parser<T>): Parser<T> {
   return (input: string) => parserThunk()(input);
-}
-
-function base(): Parser<number> {
-  return choice(between(char("("), expression(), char(")")), number);
 }
 
 // Example usage:
