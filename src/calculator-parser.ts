@@ -46,9 +46,9 @@ function regex(re: RegExp): Parser<string> {
   };
 }
 
-function sequence<T>(...parsers: Parser<T>[]): Parser<T[]> {
+function sequence<T extends any[]>(...parsers: { [K in keyof T]: Parser<T[K]> }): Parser<T> {
   return (input: string) => {
-    const results: T[] = [];
+    const results = [] as unknown as T;
     let currentInput = input;
 
     for (const parser of parsers) {
@@ -56,7 +56,7 @@ function sequence<T>(...parsers: Parser<T>[]): Parser<T[]> {
       if (!result.success) {
         return result;
       }
-      results.push(result.value);
+      (results as unknown[]).push(result.value);
       currentInput = result.rest;
     }
 
@@ -131,42 +131,70 @@ function between<T>(
   parser: Parser<T>,
   right: Parser<any>
 ): Parser<T> {
-  return map(sequence(left, parser, right), ([, value]) => value);
+  return (input: string) => {
+    const leftResult = left(input);
+    if (!leftResult.success) {
+      return {
+        success: false,
+        error: `Expected '(' but got '${input}'`,
+      };
+    }
+
+    const parserResult = parser(leftResult.rest);
+    if (!parserResult.success) {
+      return parserResult;
+    }
+
+    const rightResult = right(parserResult.rest);
+    if (!rightResult.success) {
+      return {
+        success: false,
+        error: `Expected ')' but got '${parserResult.rest}'`,
+      };
+    }
+
+    return {
+      success: true,
+      value: parserResult.value,
+      rest: rightResult.rest,
+    };
+  };
 }
 
 // Recursive expression parser:
 function expression(): Parser<number> {
-  return (input: string) => term()(input);
+  return map(
+    sequence(term(), many(sequence(regex(/^\s*[+\-]\s*/), term()))),
+    ([initial, rest]) =>
+      rest.reduce((acc, [op, value]) => {
+        if (op.trim() === "+") return acc + value;
+        if (op.trim() === "-") return acc - value;
+        return acc;
+      }, initial)
+  );
 }
 
 function term(): Parser<number> {
-  return (input: string) => {
-    const addSub = map(
-      sequence(factor(), many(sequence(operator, factor()))),
-      ([initial, rest]) =>
-        rest.reduce((acc, [op, value]) => {
-          if (op === "+") return acc + value;
-          if (op === "-") return acc - value;
-          return acc;
-        }, initial)
-    );
-    return addSub(input);
-  };
+  return map(
+    sequence(factor(), many(sequence(regex(/^\s*[*/]\s*/), factor()))),
+    ([initial, rest]) =>
+      rest.reduce((acc, [op, value]) => {
+        if (op.trim() === "*") return acc * value;
+        if (op.trim() === "/") return acc / value;
+        return acc;
+      }, initial)
+  );
 }
 
 function factor(): Parser<number> {
-  return (input: string) => {
-    const mulDiv = map(
-      sequence(base(), many(sequence(regex(/^[*/]/), base()))),
-      ([initial, rest]) =>
-        rest.reduce((acc, [op, value]) => {
-          if (op === "*") return acc * value;
-          if (op === "/") return acc / value;
-          return acc;
-        }, initial)
-    );
-    return mulDiv(input);
-  };
+  return choice(
+    number, // Handle numbers directly
+    between(char("("), lazy(() => expression()), char(")")) // Handle parentheses lazily
+  );
+}
+
+function lazy<T>(parserThunk: () => Parser<T>): Parser<T> {
+  return (input: string) => parserThunk()(input);
 }
 
 function base(): Parser<number> {
